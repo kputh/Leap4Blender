@@ -14,6 +14,7 @@ bl_info = {
 
 import bpy
 import Leap
+from Leap import SwipeGesture
 
 
 class Swipe2UndoOperator(bpy.types.Operator):
@@ -23,16 +24,19 @@ class Swipe2UndoOperator(bpy.types.Operator):
 
     _timer = None
     controller = Leap.Controller()
+    lastSwipeID = None
     
-    UPDATE_DELAY = 0.0334
+    UPDATE_DELAY = 0.0334 # seconds
 
     @classmethod
     def poll(cls, context):
         if not bpy.ops.ed.undo.poll():
+            print("bpy.ops.ed.undo() not executable.")
             return False
         
         controller = Leap.Controller()
         if not controller.is_connected:
+            print("Leap motion controller is not connected to a device.")
             return False
         
         return True
@@ -42,14 +46,20 @@ class Swipe2UndoOperator(bpy.types.Operator):
             return self.cancel(context)
 
         if event.type == 'TIMER':
-            frame = controller.frame()
+            frame = Swipe2UndoOperator.controller.frame()
             for gesture in frame.gestures():
                 if gesture.type == Leap.Gesture.TYPE_SWIPE:
                     swipe = SwipeGesture(gesture)
-                    if gesture.state == Leap.Gesture.STATE_STOP:
-                        print("undo")
+                    if swipe.state == Leap.Gesture.STATE_STOP and swipe.id != Swipe2UndoOperator.lastSwipeID:
+                        Swipe2UndoOperator.lastSwipeID = swipe.id
+                        if swipe.direction.x > 0:
+                            print("left-to-right swipe detected.")
+                        if swipe.direction.x < 0:
+                            print("right-to-left swipe detected.")
+                        '''
                         if bpy.ops.ed.undo.poll():
                             bpy.ops.ed.undo()
+                        '''
                         break
 
         return {'PASS_THROUGH'}
@@ -58,17 +68,18 @@ class Swipe2UndoOperator(bpy.types.Operator):
         # Enable gestures and filters
         Swipe2UndoOperator.controller.enable_gesture(Leap.Gesture.TYPE_SWIPE);
 
-        if(Swipe2UndoOperator.controller.config.set_float("Gesture.Swipe.MinLength", 200.0)
-            and Swipe2UndoOperator.controller.config.set_float("Gesture.Swipe.MinVelocity", 750)):
-                Swipe2UndoOperator.controller.config().save()
+        if(Swipe2UndoOperator.controller.config.set("Gesture.Swipe.MinLength", 200.0)
+            and Swipe2UndoOperator.controller.config.set("Gesture.Swipe.MinVelocity", 750)):
+                Swipe2UndoOperator.controller.config.save()
 
         self._timer = context.window_manager.event_timer_add(Swipe2UndoOperator.UPDATE_DELAY, context.window)
         context.window_manager.modal_handler_add(self)
+        print("Executing operation. (Entering modal mode.)")
         return {'RUNNING_MODAL'}
 
     def cancel(self, context):
         context.window_manager.event_timer_remove(self._timer)
-        Swipe2UndoOperator.controller.disable_gesture(Leap.Gesture.TYPE_SWIPE);
+        print("Operation canceled.")
         return {'CANCELLED'}
 
 
