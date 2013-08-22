@@ -12,6 +12,7 @@ bl_info = {
     "category": "System"}
 
 
+import math
 import bpy, mathutils
 import Leap
 
@@ -31,7 +32,7 @@ class ScaleByGestureOperator(bpy.types.Operator):
     
     UPDATE_DELAY = 1. / 30. # seconds
     SCALE = 0.05
-    EPSILON = PI/36 # 5°
+    EPSILON = math.pi / 36. # 5°
     STATE_ACTIVE = 'active'
     STATE_SUSPENDED = 'suspended'
     STATE_WAITING = 'waiting'
@@ -68,9 +69,86 @@ class ScaleByGestureOperator(bpy.types.Operator):
             frame = controller.frame()
             handCount = len(frame.hands)
             
-            if self.state == ScaleByGestureOperator.STATE_WAITING:
+            if handCount < 2:
+                return {'RUNNING_MODAL'}
+
+            hand1 = None
+            hand2 = None
+            if self.trackedHandIDs is not None and frame.hand(self.trackedHandIDs[0]).is_valid and frame.hand(self.trackedHandIDs[1]).is_valid:
+                # two hands trackable
+                hand1 = frame.hand(self.trackedHandIDs[0])
+                hand2 = frame.hand(self.trackedHandIDs[1])
                 
+                angleInRadians = hand1.palm_normal.angle_to(hand2.palm_normal)
+                distance = hand1.palm_position.distance_to(hand2.palm_position)
+                scale = distance / self.startDistance
+
+                self.ob.scale = (self.startScale.x * scale, self.startScale.y * scale, self.startScale.z * scale)
+                if angleInRadians > ScaleByGestureOperator.EPSILON:     # todo: prüfen
+                # scaling completed
+                    self.ob = None
+                    self.startScale = None
+                    self.startDistance = None
+                    self.trackedHandsIDs = None
+                else:
+                    # scaling continues
+                    pass
+            else:
+                # less than two hands tracked
+                for index1 in range(handCount):
+                    for index2 in range(index1 + 1, handCount):
+                        hand1 = frame.hands[index1]
+                        hand2 = frame.hands[index2]
+                        angleInRadians = hand1.palm_normal.angle_to(hand2.palm_normal)
+                        
+                        if angleInRadians < ScaleByGestureOperator.EPSILON:     # todo: prüfen
+                            # scaling gesture detected
+                            print("scaling gesture detected")
+                            self.ob = bpy.context.object
+                            self.startScale = self.ob.scale
+                            self.startDistance = hand1.palm_position.distance_to(hand2.palm_position)
+                            self.trackedHandIDs = (hand1.id, hand2.id)
+
+            
+            '''
+            # lost track of a hand in mid-gesture
+            if self.state == ScaleByGestureOperator.STATE_SUSPENDED:
+                print("STATE_SUSPENDED")
+                for index1 in range(handCount):
+                    for index2 in range(index1 + 1, handCount):
+                        hand1 = frame.hands[index1]
+                        hand2 = frame.hands[index2]
+                        angleInRadians = hand1.palm_normal.angle_to(hand2.palm_normal)
+                        
+                        if angleInRadians < ScaleByGestureOperator.EPSILON:
+                            # scaling gesture detected
+                            print("scaling gesture detected")
+                            self.state = ScaleByGestureOperator.STATE_ACTIVE
+                            self.ob = bpy.context.object
+                            self.trackedHandIDs = (hand1.id, hand2.id)
+    
+            # waiting for a gesture                
+            if self.state == ScaleByGestureOperator.STATE_WAITING:
+                print("STATE_WAITING")
+                
+                for index1 in range(handCount):
+                    for index2 in range(index1 + 1, handCount):
+                        hand1 = frame.hands[index1]
+                        hand2 = frame.hands[index2]
+                        angleInRadians = hand1.palm_normal.angle_to(hand2.palm_normal)
+                        
+                        if angleInRadians < ScaleByGestureOperator.EPSILON:
+                            # scaling gesture detected
+                            print("scaling gesture detected")
+                            self.state = ScaleByGestureOperator.STATE_ACTIVE
+                            self.ob = bpy.context.object
+                            self.startScale = self.ob.scale
+                            self.startDistance = hand1.palm_position.distance_to(hand2.palm_position)
+                            self.trackedHandIDs = (hand1.id, hand2.id)
+            
+            # tracking gesture
             if self.state == ScaleByGestureOperator.STATE_ACTIVE:
+                print("STATE_ACTIVE")
                 hand1 = frame.hand(self.trackedHandIDs[0])
                 hand2 = frame.hand(self.trackedHandIDs[1])
                 
@@ -84,14 +162,11 @@ class ScaleByGestureOperator(bpy.types.Operator):
                         self.trackedHandIDs = None
                     elif hand1.invalid:
                         self.trackedHandIDs = (hand2.id)
-                    else
+                    else:
                         self.trackedHandIDs = (hand1.id)
                     return {'RUNNING_MODAL'}
                     
-                normal1 = hand1.palm_normal
-                normal2 = hand2.palm_normal
-                angleInRadians = normal1.angle_to(normal2)
-                
+                angleInRadians = hand1.palm_normal.angle_to(hand2.palm_normal)
                 distance = hand1.palm_position.distance_to(hand2.palm_position)
                 scale = distance / self.startDistance
 
@@ -108,104 +183,9 @@ class ScaleByGestureOperator(bpy.types.Operator):
                     return {'RUNNING_MODAL'}
                     
                 # continue scaling
-                self.ob.scale = (scale, scale, scale)
-
-            '''            
-            for index1 in range(handcount):
-                for index2 in range(index1 + 1, handCount):
-                    normal1 = frame.hands[index1].palm_normal
-                    normal2 = frame.hands[index2].palm_normal
-                    angleInRadians = normal1.angle_to(normal2)
-                    
-                    if angleInRadians < ScaleByGestureOperator.EPSILON:
-                        # scaling gesture detected
-                        self.state = ScaleByGestureOperator.STATE_ACTIVE
-                    
-
-            for hand in frame.hands:
-                id = "palmOfHand{}".format(hand.id)
-                palmOb = bpy.data.objects.get(id)
-
-                # generate palm model if new
-                if palmOb is None:
-                    bpy.ops.mesh.primitive_plane_add(rotation=(0,0,0))
-                    palmOb = bpy.context.object
-                    palmOb.name = id
-                    ScaleByGestureOperator.generatedModels.append(palmOb)
-
-                # update hand location
-                v3d = context.space_data
-                rv3d = v3d.region_3d
-
-                palm_position = mathutils.Vector((hand.palm_position.x, hand.palm_position.y, hand.palm_position.z))
-                palm_position *= ScaleByGestureOperator.SCALE
-                palm_position.rotate(rv3d.view_rotation)
-                position_offset = mathutils.Vector((0, 0, 0))
-                position_offset.rotate(rv3d.view_rotation)
-                palmOb.location = rv3d.view_location + palm_position + position_offset
-                
-                # update virtual hand orientation
-                hand_euler = mathutils.Euler((hand.direction.pitch, -hand.direction.yaw, hand.palm_normal.roll), 'XYZ')
-                hand_quaternion = hand_euler.to_quaternion()
-                palmOb.rotation_mode ='QUATERNION'
-                palmOb.rotation_quaternion = rv3d.view_rotation * hand_quaternion
-                
-                # update fingers
-                for finger in hand.fingers:
-                    id = "fingertip{0}ofHand{1}".format(finger.id, hand.id)
-                    fingerOb = bpy.data.objects.get(id)
-
-                    # generate fingertip model if new
-                    if fingerOb is None:
-                        bpy.ops.mesh.primitive_cone_add(vertices=32, radius1=finger.width, radius2=finger.width, depth=finger.length, end_fill_type='NGON',
-                        view_align=False, enter_editmode=False,
-                        location=(finger.tip_position.x, finger.tip_position.y, finger.tip_position.z),
-                        rotation=(finger.direction.x, finger.direction.y, finger.direction.z))
-                        fingerOb = bpy.context.object
-                        fingerOb.scale = (ScaleByGestureOperator.SCALE, ScaleByGestureOperator.SCALE, ScaleByGestureOperator.SCALE)
-                        fingerOb.name = id
-                        ScaleByGestureOperator.generatedModels.append(fingerOb)
-                            
-                    # update fingertip position
-                    tip_position = mathutils.Vector((finger.tip_position.x, finger.tip_position.y, finger.tip_position.z))
-                    tip_position *= ScaleByGestureOperator.SCALE
-                    fingerOb.location = rv3d.view_location + tip_position + position_offset
-
-            # delete vanished hands
-            previousFrame = controller.frame(ScaleByGestureOperator.previousFrameID)
-            oldIDs = set(hand.id for hand in previousFrame.hands)
-            currentIDs = set(hand.id for hand in frame.hands)
-            missingIDs = oldIDs - currentIDs
-            ScaleByGestureOperator.previousFrameID = frame.id
-            
-            bpy.ops.object.select_all(action='DESELECT')
-            for id in missingIDs:
-                id = "palmOfHand{}".format(hand.id)
-                bpy.data.objects[id].select = True
-            bpy.ops.object.delete()
-            # update hands
-            leapHandDict = {hand.id: hand for hand in frame.hands}
-            leapHandIDs = leapHandDict.keys()
-            blenderHandIDs = self.hands.keys()
-    
-            # add new hands
-            for id in leapHandIDs - blenderHandIDs:
-                self.hands[id] = Hand(leapHandDict[id])
-            
-            # delete vanished hands
-            for id in blenderHandIDs - leapHandIDs:
-                self.hands[id].removeModel()
-                del self.hands[id]
-            
-            # all visible remaining hand models
-            v3d = context.space_data
-            rv3d = v3d.region_3d
-            position_offset = mathutils.Vector((0, 0, 0))
-            position_offset.rotate(rv3d.view_rotation)
-            for id in self.hands:
-                self.hands[id].update(leapHandDict[id], rv3d, position_offset)
+                self.ob.scale = (scale, scale, scale)       # todo: Fehler
             '''
-                
+
         return {'PASS_THROUGH'}
 
     def execute(self, context):
@@ -216,7 +196,8 @@ class ScaleByGestureOperator(bpy.types.Operator):
 
     def cancel(self, context):
         # restore original scale
-        self.ob.scale = self.startScale
+        if self.ob is not None:
+            self.ob.scale = self.startScale
         
         # reset variables
         self.startScale = None
