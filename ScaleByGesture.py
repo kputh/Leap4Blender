@@ -24,32 +24,21 @@ class ScaleByGestureOperator(bpy.types.Operator):
 
     _timer = None
 
-    #previousFrameID = -1
-    #generatedModels = list()
-    #hands = dict()
-    
-    #GROUP_NAME = "virtual_hands"
-    
-    UPDATE_DELAY = 1. / 30. # seconds
-    SCALE = 0.05
-    EPSILON = math.pi / 36. # 5°
-    STATE_ACTIVE = 'active'
-    STATE_SUSPENDED = 'suspended'
-    STATE_WAITING = 'waiting'
+    UPDATE_DELAY = 1.0 / 30.0 # seconds
+    EPSILON = math.pi / 36.0 # 5°
 
     def __init__(self):
         self.controller = Leap.Controller()
-        #self.hands = dict()
         
+        # create attributes
         self.ob = None
         self.startScale = None
         self.startDistance = None
-        self.state = ScaleByGestureOperator.STATE_WAITING
         self.trackedHandIDs = None
 
     @classmethod
     def poll(cls, context):
-        controller = ScaleByGestureOperator.controller
+        controller = Leap.Controller()
         if not controller.is_connected:
             print("Leap motion controller is not connected to a device.")
             return False
@@ -60,6 +49,37 @@ class ScaleByGestureOperator(bpy.types.Operator):
         
         return True
 
+    # todo: prüfen
+    def isGesture(hand1, hand2):
+        isGesture = True
+        
+        # do both hands point in the same direction?
+        # do both palm normals point in opposite directions?
+        # do both palms face each other?
+        
+        # do both hands point in the same direction?
+        angleInRadians = hand1.direction.angle_to(hand2.direction)
+        if angleInRadians < ScaleByGestureOperator.EPSILON:
+            isGesture = isGesture and True
+        else:
+            isGesture = False
+        
+        # do both palm normals point in opposite directions?
+        angleInRadians = hand1.palm_normal.angle_to(hand2.palm_normal)
+        if math.pi - angleInRadians < ScaleByGestureOperator.EPSILON:
+            # palm normals point towards each other
+            isGesture = isGesture and True
+        elif angleInRadians < ScaleByGestureOperator.EPSILON:
+            # palms normals point in the same direction (might be a tracking error)
+            isGesture = isGesture and True
+        else:
+            isGesture = False
+            
+        # do both palms face each other?
+        # TODO
+        
+        return isGesture
+        
     def modal(self, context, event):
         if event.type == 'ESC':
             return self.cancel(context)
@@ -69,123 +89,71 @@ class ScaleByGestureOperator(bpy.types.Operator):
             frame = controller.frame()
             handCount = len(frame.hands)
             
+            # are enough hands visible to form a gesture?
             if handCount < 2:
                 return {'RUNNING_MODAL'}
 
             hand1 = None
             hand2 = None
-            if self.trackedHandIDs is not None and frame.hand(self.trackedHandIDs[0]).is_valid and frame.hand(self.trackedHandIDs[1]).is_valid:
-                # two hands trackable
+            # gesture in progress?
+            if self.trackedHandIDs is not None:
+                # yes - trying to continue scaling gesture
                 hand1 = frame.hand(self.trackedHandIDs[0])
                 hand2 = frame.hand(self.trackedHandIDs[1])
-                
-                angleInRadians = hand1.palm_normal.angle_to(hand2.palm_normal)
-                distance = hand1.palm_position.distance_to(hand2.palm_position)
-                scale = distance / self.startDistance
 
-                self.ob.scale = (self.startScale.x * scale, self.startScale.y * scale, self.startScale.z * scale)
-                if angleInRadians > ScaleByGestureOperator.EPSILON:     # todo: prüfen
-                # scaling completed
-                    self.ob = None
-                    self.startScale = None
-                    self.startDistance = None
-                    self.trackedHandsIDs = None
-                else:
-                    # scaling continues
-                    pass
-            else:
-                # less than two hands tracked
-                for index1 in range(handCount):
-                    for index2 in range(index1 + 1, handCount):
-                        hand1 = frame.hands[index1]
-                        hand2 = frame.hands[index2]
-                        angleInRadians = hand1.palm_normal.angle_to(hand2.palm_normal)
-                        
-                        if angleInRadians < ScaleByGestureOperator.EPSILON:     # todo: prüfen
-                            # scaling gesture detected
-                            print("scaling gesture detected")
-                            self.ob = bpy.context.object
-                            self.startScale = self.ob.scale
-                            self.startDistance = hand1.palm_position.distance_to(hand2.palm_position)
-                            self.trackedHandIDs = (hand1.id, hand2.id)
-
-            
-            '''
-            # lost track of a hand in mid-gesture
-            if self.state == ScaleByGestureOperator.STATE_SUSPENDED:
-                print("STATE_SUSPENDED")
-                for index1 in range(handCount):
-                    for index2 in range(index1 + 1, handCount):
-                        hand1 = frame.hands[index1]
-                        hand2 = frame.hands[index2]
-                        angleInRadians = hand1.palm_normal.angle_to(hand2.palm_normal)
-                        
-                        if angleInRadians < ScaleByGestureOperator.EPSILON:
-                            # scaling gesture detected
-                            print("scaling gesture detected")
-                            self.state = ScaleByGestureOperator.STATE_ACTIVE
-                            self.ob = bpy.context.object
-                            self.trackedHandIDs = (hand1.id, hand2.id)
-    
-            # waiting for a gesture                
-            if self.state == ScaleByGestureOperator.STATE_WAITING:
-                print("STATE_WAITING")
-                
-                for index1 in range(handCount):
-                    for index2 in range(index1 + 1, handCount):
-                        hand1 = frame.hands[index1]
-                        hand2 = frame.hands[index2]
-                        angleInRadians = hand1.palm_normal.angle_to(hand2.palm_normal)
-                        
-                        if angleInRadians < ScaleByGestureOperator.EPSILON:
-                            # scaling gesture detected
-                            print("scaling gesture detected")
-                            self.state = ScaleByGestureOperator.STATE_ACTIVE
-                            self.ob = bpy.context.object
-                            self.startScale = self.ob.scale
-                            self.startDistance = hand1.palm_position.distance_to(hand2.palm_position)
-                            self.trackedHandIDs = (hand1.id, hand2.id)
-            
-            # tracking gesture
-            if self.state == ScaleByGestureOperator.STATE_ACTIVE:
-                print("STATE_ACTIVE")
-                hand1 = frame.hand(self.trackedHandIDs[0])
-                hand2 = frame.hand(self.trackedHandIDs[1])
-                
-                # test hand visibility
-                if hand1.invalid or hand2.invalid:
-                    # suspend scaling
-                    self.state = ScaleByGestureOperator.STATE_SUSPENDED
-                    self.ob.scale = self.startScale
+                # can both hands still be tracked?
+                if hand1.is_valid and hand2.is_valid:
+                    # yes - update model and evaluate gesture state
+                    distance = hand1.palm_position.distance_to(hand2.palm_position)
+                    scale = distance / self.startDistance
+                    self.ob.scale = (self.startScale.x * scale, self.startScale.y * scale, self.startScale.z * scale)
                     
-                    if hand1.invalid and hand2.invalid:
-                        self.trackedHandIDs = None
-                    elif hand1.invalid:
-                        self.trackedHandIDs = (hand2.id)
+                    # is the gesture finished?
+                    if not isGesture(hand1, hand2):
+                        # yes - reset state
+                        self.ob = None
+                        self.startScale = None
+                        self.startDistance = None
+                        self.trackedHandsIDs = None
                     else:
-                        self.trackedHandIDs = (hand1.id)
-                    return {'RUNNING_MODAL'}
-                    
-                angleInRadians = hand1.palm_normal.angle_to(hand2.palm_normal)
-                distance = hand1.palm_position.distance_to(hand2.palm_position)
-                scale = distance / self.startDistance
+                        # no - continue
+                        pass
+                else:
+                    # no - tracking failed? search for gesture!
+                    for index1 in range(handCount):
+                        for index2 in range(index1 + 1, handCount):
+                            hand1 = frame.hands[index1]
+                            hand2 = frame.hands[index2]
 
-                # test angle of hand normals
-                if angleInRadians > ScaleByGestureOperator.EPSILON:
-                    # scaling completed
-                    self.ob.scale = (scale, scale, scale)
-
-                    self.state = ScaleByGestureOperator.STATE_WAITING
-                    self.ob = None
-                    self.startScale = None
-                    self.startDistance = None
-                    self.trackedHandsIDs = None
-                    return {'RUNNING_MODAL'}
-                    
-                # continue scaling
-                self.ob.scale = (scale, scale, scale)       # todo: Fehler
-            '''
-
+                            # has a replacement been detected?
+                            if isGesture(hand1, hand2):
+                                # yes - update model and state, abort search
+                                distance = hand1.palm_position.distance_to(hand2.palm_position)
+                                scale = distance / self.startDistance
+                                self.ob.scale = (self.startScale.x * scale, self.startScale.y * scale, self.startScale.z * scale)
+                                self.trackedHandIDs = (hand1.id, hand2.id)
+                                return {'RUNNING_MODAL'}
+                            else:
+                                # no - continue search
+                                continue
+            else:
+                # no - searching for gesture
+                for index1 in range(handCount):
+                    for index2 in range(index1 + 1, handCount):
+                        hand1 = frame.hands[index1]
+                        hand2 = frame.hands[index2]
+                        
+                        # has a gesture been found?
+                        if isGesture(hand1, hand2):
+                            # yes - start tracking, update state, abort search
+                            self.ob = bpy.context.object
+                            self.startScale = self.ob.scale
+                            self.startDistance = hand1.palm_position.distance_to(hand2.palm_position)
+                            self.trackedHandIDs = (hand1.id, hand2.id)
+                            return {'RUNNING_MODAL'}
+                        else:
+                            # no - continue search
+                            continue
         return {'PASS_THROUGH'}
 
     def execute(self, context):
@@ -200,9 +168,10 @@ class ScaleByGestureOperator(bpy.types.Operator):
             self.ob.scale = self.startScale
         
         # reset variables
+        self.ob = None
         self.startScale = None
         self.startDistance = None
-        # todo
+        self.trackedHandIDs = None
         
         context.window_manager.event_timer_remove(self._timer)
         print("Operation canceled.")
