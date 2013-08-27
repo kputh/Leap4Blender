@@ -92,6 +92,7 @@ class PointToSelectOperator(bpy.types.Operator):
                 pointable = leapPointables[id]
                 ob = self.tracedPointables[id]
                 
+                ### update model ###
                 # update location
                 tip_position = mathutils.Vector((pointable.tip_position.x, pointable.tip_position.y, pointable.tip_position.z))
                 '''
@@ -115,6 +116,31 @@ class PointToSelectOperator(bpy.types.Operator):
                 ob.rotation_mode ='QUATERNION'
                 ob.rotation_quaternion = rv3d.view_rotation * directionQuaternion
                 
+                ### update selection ###
+                for obj in bpy.data.objects:
+                    # test for intersection between cone and object
+                    coordinates = obj.bound_box
+                    points = self.coordinateList2VectorList(coordinates)
+                    doesIntersect = False
+                    
+                    # test for intersection between cone axis and object bounding box
+                    for i in range(len(points) - 2):
+                        point1 = points[i]
+                        point2 = points[i + 1]
+                        point3 = points[i + 2]
+                        rayDirection = # TODO
+                        rayOrigin = ob.location
+                        intersection = mathutils.geometry.intersect_ray_tri(point1, point2, point3, rayDirection, rayOrigin)
+                        if intersection is not None:
+                            doesIntersect = True
+                            
+                    if doesIntersect:
+                        # TODO: perform more accurate intersection test
+                        pass
+
+                    # perform selection                    
+                    obj.select = doesIntersect
+                
         return {'PASS_THROUGH'}
 
     def execute(self, context):
@@ -135,6 +161,17 @@ class PointToSelectOperator(bpy.types.Operator):
         print("Operation canceled.")
         
         return {'CANCELLED'}
+    
+    def coordinateList2VectorList(list):
+        count = len(list) / 3
+        vectors = list()
+        for i in range(count):
+            base = i * 3
+            x = base
+            y = base + 1
+            z = base + 2
+            points.append(Vector((list[x], list[y], list[z])))
+        return vectors
 
 
 def register():
