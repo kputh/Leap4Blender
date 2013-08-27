@@ -25,7 +25,7 @@ class ScaleByGestureOperator(bpy.types.Operator):
     _timer = None
 
     UPDATE_DELAY = 1.0 / 30.0 # seconds
-    EPSILON = math.pi / 36.0 # 5°
+    EPSILON = math.pi / 18.0 # 10°
 
     def __init__(self):
         self.controller = Leap.Controller()
@@ -39,9 +39,11 @@ class ScaleByGestureOperator(bpy.types.Operator):
     @classmethod
     def poll(cls, context):
         controller = Leap.Controller()
+        '''
         if not controller.is_connected:
             print("Leap motion controller is not connected to a device.")
             return False
+        '''
         
         if bpy.context.active_object is None:
             print("There is no active object.")
@@ -50,7 +52,7 @@ class ScaleByGestureOperator(bpy.types.Operator):
         return True
 
     # todo: prüfen
-    def isGesture(hand1, hand2):
+    def isGesture(self, hand1, hand2):
         isGesture = True
         
         # do both hands point in the same direction?
@@ -106,15 +108,15 @@ class ScaleByGestureOperator(bpy.types.Operator):
                     # yes - update model and evaluate gesture state
                     distance = hand1.palm_position.distance_to(hand2.palm_position)
                     scale = distance / self.startDistance
-                    self.ob.scale = (self.startScale.x * scale, self.startScale.y * scale, self.startScale.z * scale)
+                    self.ob.scale = self.startScale * scale
                     
                     # is the gesture finished?
-                    if not isGesture(hand1, hand2):
+                    if not self.isGesture(hand1, hand2):
                         # yes - reset state
                         self.ob = None
                         self.startScale = None
                         self.startDistance = None
-                        self.trackedHandsIDs = None
+                        self.trackedHandIDs = None
                     else:
                         # no - continue
                         pass
@@ -126,11 +128,11 @@ class ScaleByGestureOperator(bpy.types.Operator):
                             hand2 = frame.hands[index2]
 
                             # has a replacement been detected?
-                            if isGesture(hand1, hand2):
+                            if self.isGesture(hand1, hand2):
                                 # yes - update model and state, abort search
                                 distance = hand1.palm_position.distance_to(hand2.palm_position)
                                 scale = distance / self.startDistance
-                                self.ob.scale = (self.startScale.x * scale, self.startScale.y * scale, self.startScale.z * scale)
+                                self.ob.scale = self.startScale * scale
                                 self.trackedHandIDs = (hand1.id, hand2.id)
                                 return {'RUNNING_MODAL'}
                             else:
@@ -144,10 +146,10 @@ class ScaleByGestureOperator(bpy.types.Operator):
                         hand2 = frame.hands[index2]
                         
                         # has a gesture been found?
-                        if isGesture(hand1, hand2):
+                        if self.isGesture(hand1, hand2):
                             # yes - start tracking, update state, abort search
                             self.ob = bpy.context.object
-                            self.startScale = self.ob.scale
+                            self.startScale = self.ob.scale.copy()
                             self.startDistance = hand1.palm_position.distance_to(hand2.palm_position)
                             self.trackedHandIDs = (hand1.id, hand2.id)
                             return {'RUNNING_MODAL'}
