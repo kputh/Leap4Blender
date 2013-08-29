@@ -26,6 +26,7 @@ class PointToSelectOperator(bpy.types.Operator):
 
     UPDATE_DELAY = 1.0 / 30.0 # seconds
     SCALE = 0.05
+    RANGE = 10.0
     EPSILON = math.pi / 18.0 # 10°
 
     def __init__(self):
@@ -66,8 +67,8 @@ class PointToSelectOperator(bpy.types.Operator):
             # add new pointable
             for id in leapPointableIDs - blenderPointableIDs:
                 # create model
-                depth = 10.0
-                bpy.ops.mesh.primitive_cone_add(vertices=32, radius1=1.0, radius2=0.0, depth=depth, end_fill_type='NGON',
+                depth = PointToSelectOperator.RANGE
+                bpy.ops.mesh.primitive_cone_add(vertices=32, radius1=0.01, radius2=0.01, depth=depth, end_fill_type='NGON',
                 view_align=False, enter_editmode=False,
                 location=(0.0, 0.0, 0.0),#location=(0.0, 0.0, -depth / 2.0),
                 rotation=(0.0, 0.0, 0.0))
@@ -88,6 +89,7 @@ class PointToSelectOperator(bpy.types.Operator):
             v3d = context.space_data
             rv3d = v3d.region_3d
             offset = mathutils.Vector((0.0, -300.0, 150.0))    # offset in mm between Leap Motion coordinate system and user coordinate system
+            selected1 = list()
             for id in self.tracedPointables:
                 pointable = leapPointables[id]
                 ob = self.tracedPointables[id]
@@ -116,11 +118,26 @@ class PointToSelectOperator(bpy.types.Operator):
                 ob.rotation_mode ='QUATERNION'
                 ob.rotation_quaternion = rv3d.view_rotation * directionQuaternion
                 
-                ### update selection ###
+                ### update selection (1) ###
+                selected2 = set()
+                selected1.append(selected2)
+                rayDirection = mathutils.Vector((0.0, 0.0, 1.0))
+                rayDirection.rotate(ob.rotation_quaternion)
+                rayOrigin = ob.location
                 for obj in bpy.data.objects:
+                    # filter "own" objects out
+                    if obj in self.tracedPointables:
+                        obj.select = False
+                        continue
+                    
                     # test for intersection between cone and object
                     coordinates = obj.bound_box
-                    points = self.coordinateList2VectorList(coordinates)
+                    points = list()
+                    for i in range(len(coordinates)):
+                        x = coordinates[i][0]
+                        y = coordinates[i][1]
+                        z = coordinates[i][2]
+                        points.append(mathutils.Vector((x, y, z)))
                     doesIntersect = False
                     
                     # test for intersection between cone axis and object bounding box
@@ -128,18 +145,30 @@ class PointToSelectOperator(bpy.types.Operator):
                         point1 = points[i]
                         point2 = points[i + 1]
                         point3 = points[i + 2]
-                        rayDirection = # TODO
-                        rayOrigin = ob.location
                         intersection = mathutils.geometry.intersect_ray_tri(point1, point2, point3, rayDirection, rayOrigin)
                         if intersection is not None:
-                            doesIntersect = True
-                            
+                            distance = (rayOrigin - intersection).length
+                            if distance < PointToSelectOperator.RANGE:
+                                doesIntersect = True
+                                break
+                                
                     if doesIntersect:
                         # TODO: perform more accurate intersection test
                         pass
 
-                    # perform selection                    
-                    obj.select = doesIntersect
+                    # memorize as selected by this pointable
+                    if doesIntersect:
+                        print("selected: "+obj.name)
+                        selected2.add(obj)
+                    
+            # perform actual selection
+            bpy.ops.object.select_all(action='DESELECT')
+            if len(selected1) > 0:
+                intersection = selected1[0]
+                for selectionSet in selected1:
+                    intersection &= selectionSet
+                for ob in intersection:
+                    ob.select = True
                 
         return {'PASS_THROUGH'}
 
@@ -162,15 +191,15 @@ class PointToSelectOperator(bpy.types.Operator):
         
         return {'CANCELLED'}
     
-    def coordinateList2VectorList(list):
-        count = len(list) / 3
+    def coordinateList2VectorList(self, lst):
+        count = int(len(lst) / 3)
         vectors = list()
         for i in range(count):
             base = i * 3
-            x = base
-            y = base + 1
-            z = base + 2
-            points.append(Vector((list[x], list[y], list[z])))
+            x = float(lst[base])
+            y = float(lst[base + 1])
+            z = float(lst[base + 2])
+            vectors.append(mathutils.Vector((x, y, z)))
         return vectors
 
 
