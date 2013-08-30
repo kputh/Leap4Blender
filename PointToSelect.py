@@ -65,15 +65,18 @@ class PointToSelectOperator(bpy.types.Operator):
                     del leapPointables[id]
     
             # add new pointable
+            depth = PointToSelectOperator.RANGE
+            offset = mathutils.Vector((0.0, 0.0, -depth / 2.0))
             for id in leapPointableIDs - blenderPointableIDs:
                 # create model
-                depth = PointToSelectOperator.RANGE
                 bpy.ops.mesh.primitive_cone_add(vertices=32, radius1=0.01, radius2=0.01, depth=depth, end_fill_type='NGON',
                 view_align=False, enter_editmode=False,
                 location=(0.0, 0.0, 0.0),#location=(0.0, 0.0, -depth / 2.0),
                 rotation=(0.0, 0.0, 0.0))
                 ob = bpy.context.object
                 ob.name = "pointable{}".format(id)
+                for vertex in ob.data.vertices:
+                    vertex.co += offset
         
                 # add object
                 self.tracedPointables[id] = ob
@@ -96,24 +99,14 @@ class PointToSelectOperator(bpy.types.Operator):
                 
                 ### update model ###
                 # update location
-                tip_position = mathutils.Vector((pointable.tip_position.x, pointable.tip_position.y, pointable.tip_position.z))
-                '''
-                point2 = mathutils.Vector((pointable.tip_position.x, pointable.tip_position.y, pointable.tip_position.z))
-                endpoint1 = mathutils.geometry.intersect_line_plane(tip_position, line_b, plane_co, plane_no, no_flip=False)
-                '''
+                tip_position = mathutils.Vector((pointable.stabilized_tip_position.x, pointable.stabilized_tip_position.y, pointable.stabilized_tip_position.z))
                 tip_position += offset
                 tip_position *= PointToSelectOperator.SCALE
                 tip_position.rotate(rv3d.view_rotation)
                 ob.location = rv3d.view_location + tip_position
-                # Fehler: Mittelpunkt des Objekts wird auf die Position der Fingerspitze gelegt.
         
                 # update direction
-                #directionEuler = mathutils.Euler((pointable.direction.pitch, -pointable.direction.yaw, pointable.hand.palm_normal.roll), 'XYZ')
                 directionEuler = mathutils.Euler((pointable.direction.pitch, -pointable.direction.yaw, -pointable.hand.palm_normal.roll), 'XYZ')
-                #directionEuler = mathutils.Euler((pointable.direction.pitch, -pointable.direction.yaw, 0.0), 'XYZ')
-                #directionEuler = mathutils.Euler((pointable.direction.pitch, 0.0, 0.0), 'XYZ')  # ok
-                #directionEuler = mathutils.Euler((0.0, -pointable.direction.yaw, 0.0), 'XYZ')   # ok
-                #directionEuler = mathutils.Euler((0.0, 0.0, pointable.direction.roll), 'XYZ')   # ?
                 directionQuaternion = directionEuler.to_quaternion()
                 ob.rotation_mode ='QUATERNION'
                 ob.rotation_quaternion = rv3d.view_rotation * directionQuaternion
@@ -127,7 +120,6 @@ class PointToSelectOperator(bpy.types.Operator):
                 for obj in bpy.data.objects:
                     # filter "own" objects out
                     if obj in self.tracedPointables:
-                        obj.select = False
                         continue
                     
                     # test for intersection between cone and object
@@ -152,13 +144,22 @@ class PointToSelectOperator(bpy.types.Operator):
                                 doesIntersect = True
                                 break
                                 
+                    # test for intersection between cone axis and object polygons
                     if doesIntersect:
-                        # TODO: perform more accurate intersection test
-                        pass
+                        doesIntersect = False
+                        for polygon in obj.data.polygons:
+                            point1 = obj.data.vertices[polygon.vertices[0]].co
+                            point2 = obj.data.vertices[polygon.vertices[1]].co
+                            point3 = obj.data.vertices[polygon.vertices[2]].co
+                            intersection = mathutils.geometry.intersect_ray_tri(point1, point2, point3, rayDirection, rayOrigin)
+                            if intersection is not None:
+                                distance = (rayOrigin - intersection).length
+                                if distance < PointToSelectOperator.RANGE:
+                                    doesIntersect = True
+                                    break
 
                     # memorize as selected by this pointable
                     if doesIntersect:
-                        print("selected: "+obj.name)
                         selected2.add(obj)
                     
             # perform actual selection
