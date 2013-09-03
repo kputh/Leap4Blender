@@ -33,16 +33,25 @@ class TranslateAndRotateOperator(bpy.types.Operator):
         self.controller = Leap.Controller()
         
         # create attributes
-        self.tracedPointables = dict()
+        self.handID = None
+        self.fingerIDs = None
+        self.startPosition = None
+        self.startOrientierung = None
+        self.ob = None
+        self.startLocation = None
+        self.startRotation = None
 
     @classmethod
     def poll(cls, context):
         controller = Leap.Controller()
-        '''
+
         if not controller.is_connected:
             print("Leap motion controller is not connected to a device.")
             return False
-        '''
+
+        if bpy.context.active_object is None:
+            print("There is no active object.")
+            return False
         
         return True
 
@@ -54,168 +63,57 @@ class TranslateAndRotateOperator(bpy.types.Operator):
             controller = self.controller
             frame = controller.frame()
             
-            if self.activeHand is Not None:
+            if self.handID is not None:
                 # Trying to track hand.
-                if self.activeHand.is_valid:
+                hand = frame.hand(self.handID)
+                if hand.is_valid:
                     # Hand tracking successfull. Checking fingers.
-                    if len(hand.fingers) == 2 and self.finger1.is_valid and self.finger2.is_valid:  # überdenken
+                    finger1 = hand.finger(self.fingerIDs[0])
+                    finger2 = hand.finger(self.fingerIDs[1])
+                    if len(hand.fingers) == 2 and finger1.is_valid and finger2.is_valid:  # überdenken
                         # Finger tracking succeeded. Update object.
-                        self.updateObject()
+                        self.updateObject(frame, context)
                     else:
                         # Finger tracking failed. Assuming end of gesture.
                         # Reseting state
-                        # TODO
+                        self.handID = None
+                        self.fingerIDs = None
+                        self.startPosition = None
+                        self.startOrientierung = None
+                        self.ob = None
+                        self.startLocation = None
+                        self.startRotation = None
                 else:
                     # Hand tracking failed. Searching for gesture.
                     for hand in frame.hands:
                         if len(hand.fingers) == 2:
                             # Replacement hand found. Updating state and object.
-                            self.activeHand = hand
-                            self.finger1 = hand.fingers[0]
-                            self.finger2 = hand.fingers[1]
+                            self.handID = hand.id
+                            self.fingerIDs = (hand.fingers[0].id, hand.fingers[1].id)
                             
                             # Update object
-                            self.updateObject()
+                            self.updateObject(frame, context)
                             
                             break
                     # No replacement hand/gesture found. Assuming hand moved out of sight. Resetting state and object.
                     # TODO
             else:
-            # No hand is being tracked. Searching for gesture.
-            for hand in frame.hands:
-                if len(hand.fingers) == 2:
-                    # Gesture found. Memorizing starting position and orientation.
-                    self.activeHand = hand
-                    self.finger1 = hand.fingers[0]
-                    self.finger2 = hand.fingers[1]
-                    self.startPosition = self.finger1.stabilized_tip_position - self.finger2.stabilized_tip_position
-                    self.startOrientierung = self.finger1.direction - self.finger2.direction
-                    
-                    self.ob = bpy.context.object
-                    self.startLocation = self.ob.location.copy()
-                    self.startRotation = self.ob.rotation_quaternion.copy()
-                    
-                    break
-                
-
-            '''                    
-            ### alter code ###
-            leapHands = {hand.id: hand for hand in frame.hands}
-            leapHandIDs = leapHands.keys()
-
-            # filter by gesture
-            tmp = dict(leapHands)
-            for id in tmp.keys():
-                if len(tmp[id].hand.pointables) != 1:
-                    del leapHands[id]
-    
-            # add new pointable
-            depth = TranslateAndRotateOperator.RANGE
-            offset = mathutils.Vector((0.0, 0.0, -depth / 2.0))
-            for id in leapHandIDs - blenderPointableIDs:
-                # create model
-                bpy.ops.mesh.primitive_cone_add(vertices=32, radius1=0.01, radius2=0.01, depth=depth, end_fill_type='NGON',
-                view_align=False, enter_editmode=False,
-                location=(0.0, 0.0, 0.0),#location=(0.0, 0.0, -depth / 2.0),
-                rotation=(0.0, 0.0, 0.0))
-                ob = bpy.context.object
-                ob.name = "pointable{}".format(id)
-                for vertex in ob.data.vertices:
-                    vertex.co += offset
-        
-                # add object
-                self.tracedPointables[id] = ob
-            
-            # remove vanished pointables
-            bpy.ops.object.select_all(action='DESELECT')
-            for id in blenderPointableIDs - leapHandIDs:
-                self.tracedPointables[id].select = True
-                del self.tracedPointables[id]
-            bpy.ops.object.delete()
-            
-            # update visible pointables
-            v3d = context.space_data
-            rv3d = v3d.region_3d
-            offset = mathutils.Vector((0.0, -300.0, 150.0))    # offset in mm between Leap Motion coordinate system and user coordinate system
-            selected1 = list()
-            for id in self.tracedPointables:
-                pointable = leapHands[id]
-                ob = self.tracedPointables[id]
-                
-                ### update model ###
-                # update location
-                tip_position = mathutils.Vector((pointable.stabilized_tip_position.x, pointable.stabilized_tip_position.y, pointable.stabilized_tip_position.z))
-                tip_position += offset
-                tip_position *= TranslateAndRotateOperator.SCALE
-                tip_position.rotate(rv3d.view_rotation)
-                ob.location = rv3d.view_location + tip_position
-        
-                # update direction
-                directionEuler = mathutils.Euler((pointable.direction.pitch, -pointable.direction.yaw, -pointable.hand.palm_normal.roll), 'XYZ')
-                directionQuaternion = directionEuler.to_quaternion()
-                ob.rotation_mode ='QUATERNION'
-                ob.rotation_quaternion = rv3d.view_rotation * directionQuaternion
-                
-                ### update selection (1) ###
-                selected2 = set()
-                selected1.append(selected2)
-                rayDirection = mathutils.Vector((0.0, 0.0, 1.0))
-                rayDirection.rotate(ob.rotation_quaternion)
-                rayOrigin = ob.location
-                for obj in bpy.data.objects:
-                    # filter "own" objects out
-                    if obj in self.tracedPointables:
-                        continue
-                    
-                    # test for intersection between cone and object
-                    coordinates = obj.bound_box
-                    points = list()
-                    for i in range(len(coordinates)):
-                        x = coordinates[i][0]
-                        y = coordinates[i][1]
-                        z = coordinates[i][2]
-                        points.append(mathutils.Vector((x, y, z)))
-                    doesIntersect = False
-                    
-                    # test for intersection between cone axis and object bounding box
-                    for i in range(len(points) - 2):
-                        point1 = points[i]
-                        point2 = points[i + 1]
-                        point3 = points[i + 2]
-                        intersection = mathutils.geometry.intersect_ray_tri(point1, point2, point3, rayDirection, rayOrigin)
-                        if intersection is not None:
-                            distance = (rayOrigin - intersection).length
-                            if distance < TranslateAndRotateOperator.RANGE:
-                                doesIntersect = True
-                                break
-                                
-                    # test for intersection between cone axis and object polygons
-                    if doesIntersect:
-                        doesIntersect = False
-                        for polygon in obj.data.polygons:
-                            point1 = obj.data.vertices[polygon.vertices[0]].co
-                            point2 = obj.data.vertices[polygon.vertices[1]].co
-                            point3 = obj.data.vertices[polygon.vertices[2]].co
-                            intersection = mathutils.geometry.intersect_ray_tri(point1, point2, point3, rayDirection, rayOrigin)
-                            if intersection is not None:
-                                distance = (rayOrigin - intersection).length
-                                if distance < TranslateAndRotateOperator.RANGE:
-                                    doesIntersect = True
-                                    break
-
-                    # memorize as selected by this pointable
-                    if doesIntersect:
-                        selected2.add(obj)
-                    
-            # perform actual selection
-            bpy.ops.object.select_all(action='DESELECT')
-            if len(selected1) > 0:
-                intersection = selected1[0]
-                for selectionSet in selected1:
-                    intersection &= selectionSet
-                for ob in intersection:
-                    ob.select = True
-            '''
+                # No hand is being tracked. Searching for gesture.
+                for hand in frame.hands:
+                    if len(hand.fingers) == 2:
+                        # Gesture found. Memorizing starting position and orientation.
+                        print("New gesture found.")
+                        self.handID = hand.id
+                        self.fingerIDs = (hand.fingers[0].id, hand.fingers[1].id)
+                        self.startPosition = hand.fingers[0].stabilized_tip_position
+                        self.startOrientierung = hand.fingers[0].direction
+                        
+                        self.ob = bpy.context.object
+                        self.ob.rotation_mode ='QUATERNION'
+                        self.startLocation = self.ob.location.copy()
+                        self.startRotation = self.ob.rotation_quaternion.copy()
+                        
+                        break
                 
         return {'PASS_THROUGH'}
 
@@ -227,38 +125,61 @@ class TranslateAndRotateOperator(bpy.types.Operator):
 
     def cancel(self, context):
         # reset object position and rotation
-        # TODO
+        self.ob.location = self.startLocation
+        self.ob.rotation_quaternion = self.startRotation
+        
+        # reset attributes
+        self.handID = None
+        self.fingerIDs = None
+        self.startPosition = None
+        self.startOrientierung = None
+        self.ob = None
+        self.startLocation = None
+        self.startRotation = None
 
         context.window_manager.event_timer_remove(self._timer)
         print("Operation canceled.")
         
         return {'CANCELLED'}
-    
-    def coordinateList2VectorList(self, lst):
-        count = int(len(lst) / 3)
-        vectors = list()
-        for i in range(count):
-            base = i * 3
-            x = float(lst[base])
-            y = float(lst[base + 1])
-            z = float(lst[base + 2])
-            vectors.append(mathutils.Vector((x, y, z)))
-        return vectors
-    
+
     def searchGesture(self, frame):
         for hand in frame.hands:
             if len(hand.fingers) == 2:
                 # Gesture found. Memorizing hand and fingers.
-                self.activeHand = hand
-                self.finger1 = hand.fingers[0]
-                self.finger2 = hand.fingers[1]
+                self.handID = hand.id
+                self.fingerIDs = (hand.fingers[0].id, hand.fingers[1].id)
                 return True
-            
+                
         return False
                 
-    def updateObject(self):
+    def updateObject(self, frame, context):
+        v3d = context.space_data
+        rv3d = v3d.region_3d
+        view = context.space_data.region_3d
+    
+        # update location
+        hand = frame.hand(self.handID)
+        finger1 = hand.finger(self.fingerIDs[0])
+        finger2 = hand.finger(self.fingerIDs[1])
+
+        difference = finger1.stabilized_tip_position - self.startPosition
+        difference = mathutils.Vector((difference.x, difference.y, difference.z))
+        difference *= TranslateAndRotateOperator.SCALE
+        difference.rotate(view.view_rotation)
+        self.ob.location = self.startLocation + difference
+
+        # update direction
+        roll = finger1.direction.roll - self.startOrientierung.roll     # rotation around the x axis
+        pitch = finger1.direction.pitch - self.startOrientierung.pitch  # rotation around the y axis
+        yaw = finger1.direction.yaw - self.startOrientierung.yaw        # rotation around the z axis
+        #difference = mathutils.Euler((pitch, -yaw, -roll), 'XYZ').to_quaternion()
+        difference = mathutils.Euler((roll, pitch, yaw), 'XYZ').to_quaternion()
+        print("difference: {}".format(difference))
+        print("self.startRotation: {}".format(self.startRotation))
+        print("self.startRotation * difference: {}".format(self.startRotation * difference))
+        self.ob.rotation_quaternion = self.startRotation * difference   # TODO relative Differenz benutzen? Handorientierung benutzen?
+
         # TODO
-        pass
 
 
 def register():
