@@ -64,6 +64,8 @@ class PointToSelectOperator(bpy.types.Operator):
                 if len(tmp[id].hand.pointables) != 1:
                     del leapPointables[id]
     
+            self.saveSelection()
+
             # add new pointable
             depth = PointToSelectOperator.RANGE
             offset = mathutils.Vector((0.0, 0.0, -depth / 2.0))
@@ -88,6 +90,8 @@ class PointToSelectOperator(bpy.types.Operator):
                 del self.tracedPointables[id]
             bpy.ops.object.delete()
             
+            self.restoreSelection()
+
             # update visible pointables
             v3d = context.space_data
             rv3d = v3d.region_3d
@@ -163,14 +167,15 @@ class PointToSelectOperator(bpy.types.Operator):
                         selected2.add(obj)
                     
             # perform actual selection
-            bpy.ops.object.select_all(action='DESELECT')
-            if len(selected1) > 0:
-                intersection = selected1[0]
-                for selectionSet in selected1:
-                    intersection &= selectionSet
-                for ob in intersection:
-                    ob.select = True
-                
+            if len(self.tracedPointables) > 0:
+                bpy.ops.object.select_all(action='DESELECT')
+                if len(selected1) > 0:
+                    intersection = selected1[0]
+                    for selectionSet in selected1:
+                        intersection &= selectionSet
+                    for ob in intersection:
+                        ob.select = True
+                    
         return {'PASS_THROUGH'}
 
     def execute(self, context):
@@ -181,10 +186,12 @@ class PointToSelectOperator(bpy.types.Operator):
 
     def cancel(self, context):
         # remove objects
+        self.saveSelection()
         bpy.ops.object.select_all(action='DESELECT')
         for id in self.tracedPointables:
             self.tracedPointables[id].select = True
         bpy.ops.object.delete()
+        seld.restoreSelection()
         self.tracedPointables.clear()
 
         context.window_manager.event_timer_remove(self._timer)
@@ -202,6 +209,15 @@ class PointToSelectOperator(bpy.types.Operator):
             z = float(lst[base + 2])
             vectors.append(mathutils.Vector((x, y, z)))
         return vectors
+    
+    def saveSelection(self):
+        self.selection = bpy.context.selected_objects.copy()
+        
+    def restoreSelection(self):
+        bpy.ops.object.select_all(action='DESELECT')
+        for ob in self.selection:
+            ob.select = True
+        self.selection = None
 
 
 def register():
