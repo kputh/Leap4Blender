@@ -34,7 +34,6 @@ class TranslateAndRotateOperator(bpy.types.Operator):
         
         # create attributes
         self.handID = None
-        self.fingerIDs = None
         self.startPosition = None
         self.startOrientierung = None
         self.ob = None
@@ -68,16 +67,13 @@ class TranslateAndRotateOperator(bpy.types.Operator):
                 hand = frame.hand(self.handID)
                 if hand.is_valid:
                     # Hand tracking successfull. Checking fingers.
-                    finger1 = hand.finger(self.fingerIDs[0])
-                    finger2 = hand.finger(self.fingerIDs[1])
-                    if len(hand.fingers) == 2 and finger1.is_valid and finger2.is_valid:  # überdenken
+                    if self.isGesture(hand):
                         # Finger tracking succeeded. Update object.
                         self.updateObject(frame, context)
                     else:
                         # Finger tracking failed. Assuming end of gesture.
                         # Reseting state
                         self.handID = None
-                        self.fingerIDs = None
                         self.startPosition = None
                         self.startOrientierung = None
                         self.ob = None
@@ -86,10 +82,9 @@ class TranslateAndRotateOperator(bpy.types.Operator):
                 else:
                     # Hand tracking failed. Searching for gesture.
                     for hand in frame.hands:
-                        if len(hand.fingers) == 2:
+                        if self.isGesture(hand):
                             # Replacement hand found. Updating state and object.
                             self.handID = hand.id
-                            self.fingerIDs = (hand.fingers[0].id, hand.fingers[1].id)
                             
                             # Update object
                             self.updateObject(frame, context)
@@ -100,14 +95,16 @@ class TranslateAndRotateOperator(bpy.types.Operator):
             else:
                 # No hand is being tracked. Searching for gesture.
                 for hand in frame.hands:
-                    if len(hand.fingers) == 2:
+                    if self.isGesture(hand):
                         # Gesture found. Memorizing starting position and orientation.
                         print("New gesture found.")
                         self.handID = hand.id
-                        self.fingerIDs = (hand.fingers[0].id, hand.fingers[1].id)
-                        self.startPosition = hand.fingers[0].stabilized_tip_position
-                        self.startOrientierung = hand.fingers[0].direction
-                        
+                        self.startPosition = hand.palm_position
+                        orientation = Leap.Vector()
+                        orientation.pitch = hand.direction.pitch        
+                        orientation.yaw = hand.direction.yaw
+                        orientation.roll = hand.palm_normal.roll
+                        self.startOrientierung = orientation
                         self.ob = bpy.context.object
                         self.ob.rotation_mode ='QUATERNION'
                         self.startLocation = self.ob.location.copy()
@@ -130,7 +127,6 @@ class TranslateAndRotateOperator(bpy.types.Operator):
         
         # reset attributes
         self.handID = None
-        self.fingerIDs = None
         self.startPosition = None
         self.startOrientierung = None
         self.ob = None
@@ -142,9 +138,24 @@ class TranslateAndRotateOperator(bpy.types.Operator):
         
         return {'CANCELLED'}
 
+    def isGesture(self, hand):
+        
+        if len(hand.fingers) != 2:
+            return False
+        
+        finger1 = hand.fingers[0]
+        finger2 = hand.fingers[1]
+        angle = finger1.direction.angle_to(finger2.direction)
+        min = math.pi / 18  # 10°
+        max = math.pi / 4   # 45°
+        if min < angle and angle < max:
+            return True
+        else:
+            return False
+
     def searchGesture(self, frame):
         for hand in frame.hands:
-            if len(hand.fingers) == 2:
+            if self.isGesture(hand):
                 # Gesture found. Memorizing hand and fingers.
                 self.handID = hand.id
                 self.fingerIDs = (hand.fingers[0].id, hand.fingers[1].id)
@@ -159,27 +170,24 @@ class TranslateAndRotateOperator(bpy.types.Operator):
     
         # update location
         hand = frame.hand(self.handID)
-        finger1 = hand.finger(self.fingerIDs[0])
-        finger2 = hand.finger(self.fingerIDs[1])
 
-        difference = finger1.stabilized_tip_position - self.startPosition
+        difference = hand.palm_position - self.startPosition
         difference = mathutils.Vector((difference.x, difference.y, difference.z))
         difference *= TranslateAndRotateOperator.SCALE
         difference.rotate(view.view_rotation)
         self.ob.location = self.startLocation + difference
 
         # update direction
-        roll = finger1.direction.roll - self.startOrientierung.roll     # rotation around the x axis
-        pitch = finger1.direction.pitch - self.startOrientierung.pitch  # rotation around the y axis
-        yaw = finger1.direction.yaw - self.startOrientierung.yaw        # rotation around the z axis
+        pitch = hand.direction.pitch - self.startOrientierung.pitch     # rotation around the x axis
+        yaw = hand.direction.yaw - self.startOrientierung.yaw           # rotation around the y axis
+        roll = hand.palm_normal.roll - self.startOrientierung.roll      # rotation around the z axis
         #difference = mathutils.Euler((pitch, -yaw, -roll), 'XYZ').to_quaternion()
         difference = mathutils.Euler((roll, pitch, yaw), 'XYZ').to_quaternion()
+        difference.rotate(view.view_rotation)
         print("difference: {}".format(difference))
         print("self.startRotation: {}".format(self.startRotation))
         print("self.startRotation * difference: {}".format(self.startRotation * difference))
-        self.ob.rotation_quaternion = self.startRotation * difference   # TODO relative Differenz benutzen? Handorientierung benutzen?
-
-        # TODO
+        self.ob.rotation_quaternion = self.startRotation * difference   # TODO relative Differenz benutzen?
 
 
 def register():
